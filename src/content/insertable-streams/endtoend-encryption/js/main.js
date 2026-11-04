@@ -15,9 +15,9 @@ const video1 = document.querySelector('video#video1');
 const video2 = document.querySelector('video#video2');
 const videoMonitor = document.querySelector('#video-monitor');
 
-const startButton = document.querySelector('button#start');
-const callButton = document.querySelector('button#call');
-const hangupButton = document.querySelector('button#hangup');
+const startButton = document.getElementById('startButton');
+const callButton = document.getElementById('callButton');
+const hangupButton = document.getElementById('hangupButton');
 
 const cryptoKey = document.querySelector('#crypto-key');
 const cryptoOffsetBox = document.querySelector('#crypto-offset');
@@ -38,6 +38,17 @@ let startToEnd;
 let localStream;
 // eslint-disable-next-line no-unused-vars
 let remoteStream;
+
+// Preferring a certain codec is an expert option without GUI.
+// Use opus by default.
+// eslint-disable-next-line prefer-const
+let preferredAudioCodecMimeType = 'audio/opus';
+// Use VP8 by default to limit depacketization issues.
+// eslint-disable-next-line prefer-const
+let preferredVideoCodecMimeType = 'video/VP8';
+
+const supportsSetCodecPreferences = window.RTCRtpTransceiver &&
+  'setCodecPreferences' in window.RTCRtpTransceiver.prototype;
 
 let hasEnoughAPIs = !!window.RTCRtpScriptTransform;
 
@@ -141,6 +152,25 @@ function setupReceiverTransform(receiver) {
   }, [readable, writable]);
 }
 
+function maybeSetCodecPreferences(trackEvent) {
+  if (!supportsSetCodecPreferences) return;
+  if (trackEvent.track.kind === 'audio' && preferredAudioCodecMimeType ) {
+    const {codecs} = RTCRtpReceiver.getCapabilities('audio');
+    const selectedCodecIndex = codecs.findIndex(c => c.mimeType === preferredAudioCodecMimeType);
+    const selectedCodec = codecs[selectedCodecIndex];
+    codecs.splice(selectedCodecIndex, 1);
+    codecs.unshift(selectedCodec);
+    trackEvent.transceiver.setCodecPreferences(codecs);
+  } else if (trackEvent.track.kind === 'video' && preferredVideoCodecMimeType) {
+    const {codecs} = RTCRtpReceiver.getCapabilities('video');
+    const selectedCodecIndex = codecs.findIndex(c => c.mimeType === preferredVideoCodecMimeType);
+    const selectedCodec = codecs[selectedCodecIndex];
+    codecs.splice(selectedCodecIndex, 1);
+    codecs.unshift(selectedCodec);
+    trackEvent.transceiver.setCodecPreferences(codecs);
+  }
+}
+
 function call() {
   callButton.disabled = true;
   hangupButton.disabled = false;
@@ -151,6 +181,7 @@ function call() {
   // to both places.
   startToMiddle = new VideoPipe(localStream, true, false, e => {
     // Do not setup the receiver transform.
+    maybeSetCodecPreferences(e);
     videoMonitor.srcObject = e.streams[0];
   });
   startToMiddle.pc1.getSenders().forEach(setupSenderTransform);
@@ -158,6 +189,7 @@ function call() {
 
   startToEnd = new VideoPipe(localStream, true, true, e => {
     setupReceiverTransform(e.receiver);
+    maybeSetCodecPreferences(e);
     gotRemoteStream(e.streams[0]);
   });
   startToEnd.pc1.getSenders().forEach(setupSenderTransform);
